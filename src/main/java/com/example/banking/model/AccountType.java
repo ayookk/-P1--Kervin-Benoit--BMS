@@ -1,5 +1,5 @@
 package com.example.banking.model;
 
 public enum AccountType {
-    SAVINGS, CURRENT
+    SAVINGS, CURRENT, DEPOSIT, LOAN
 }

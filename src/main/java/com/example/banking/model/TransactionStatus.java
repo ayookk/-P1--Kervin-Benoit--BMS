@@ -1,5 +1,5 @@
 package com.example.banking.model;
 
 public enum TransactionStatus {
-    SUCCESS, FAILED, PENDING
+    PENDING, SUCCESS, FAILED, REVERSED
 }
