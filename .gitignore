@@ -1,3 +1,4 @@
 target/
 src/main/resources/db.properties
-*.code-workspace
+*.code-workspace 
+logs/

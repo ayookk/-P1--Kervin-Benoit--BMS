@@ -1,0 +1,13 @@
+<configuration>
+    <!-- Technical logs go to a file so they never clutter the menu (design doc section 24). -->
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+        <file>logs/banking-cli.log</file>
+        <encoder>
+            <pattern>%d{ISO8601} %-5level [%thread] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>
