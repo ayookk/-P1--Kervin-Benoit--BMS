@@ -3,6 +3,7 @@ package com.example.banking.fakes;
 import com.example.banking.dao.AccountDAO;
 import com.example.banking.model.Account;
 import com.example.banking.model.AccountStatus;
+import com.example.banking.model.Money;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -16,6 +17,7 @@ public class InMemoryAccountDAO implements AccountDAO {
     private final Map<Long, Account> rows = new LinkedHashMap<>();
     private long nextId = 1;
     private int statusUpdates = 0;
+    private int balanceUpdates = 0;
 
     @Override
     public Account insert(Account account) {
@@ -54,7 +56,24 @@ public class InMemoryAccountDAO implements AccountDAO {
         statusUpdates++;
     }
 
-    public int statusUpdates() {
-        return statusUpdates;
+    @Override
+    public Optional<Account> lockOwned(Connection conn, long accountId, long customerId) {
+        return findOwnedById(accountId, customerId);
     }
+
+    @Override
+    public List<Account> lockForUpdate(Connection conn, List<Long> accountIds) {
+        return accountIds.stream().distinct().sorted()
+                .map(rows::get)
+                .filter(a -> a != null)
+                .toList();
+    }
+
+    @Override
+    public void updateBalance(Connection conn, long accountId, Money newBalance) {
+        balanceUpdates++;   // the Account object itself already holds the new balance
+    }
+
+    public int statusUpdates() { return statusUpdates; }
+    public int balanceUpdates() { return balanceUpdates; }
 }

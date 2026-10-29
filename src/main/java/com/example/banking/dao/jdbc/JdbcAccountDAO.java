@@ -185,7 +185,58 @@ public class JdbcAccountDAO implements AccountDAO {
             throw new PersistenceException("Could not update account status", e);
         }
     }
+        // ---------- inside a money transaction ----------
 
+    @Override
+    public Optional<Account> lockOwned(Connection conn, long accountId, long customerId) {
+        String sql = SELECT + "WHERE a.account_id = ? AND a.customer_id = ? FOR UPDATE";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setQueryTimeout(queryTimeoutSeconds);
+            ps.setLong(1, accountId);
+            ps.setLong(2, customerId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(mapRow(rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new PersistenceException("Could not lock account", e);
+        }
+    }
+
+    @Override
+    public List<Account> lockForUpdate(Connection conn, List<Long> accountIds) {
+        List<Long> ascending = accountIds.stream().distinct().sorted().toList();
+        String sql = SELECT + "WHERE a.account_id = ? FOR UPDATE";
+        List<Account> locked = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setQueryTimeout(queryTimeoutSeconds);
+            for (Long id : ascending) {             // one at a time, lowest id first
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        locked.add(mapRow(rs));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new PersistenceException("Could not lock accounts", e);
+        }
+        return locked;
+    }
+
+    @Override
+    public void updateBalance(Connection conn, long accountId, Money newBalance) {
+        String sql = "UPDATE accounts SET balance = ? WHERE account_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setQueryTimeout(queryTimeoutSeconds);
+            ps.setBigDecimal(1, newBalance.toBigDecimal());
+            ps.setLong(2, accountId);
+            if (ps.executeUpdate() != 1) {
+                throw new PersistenceException("Account " + accountId + " was not updated", null);
+            }
+        } catch (SQLException e) {
+            throw new PersistenceException("Could not update balance", e);
+        }
+    }
     // ---------- mapping ----------
 
     /** Builds the right subclass for the row's account_type (polymorphism starts here). */
