@@ -3,18 +3,25 @@ package com.example.banking.app;
 import com.example.banking.dao.AccountDAO;
 import com.example.banking.dao.CustomerDAO;
 import com.example.banking.dao.LoginAuditDAO;
+import com.example.banking.dao.TransactionAuditDAO;
+import com.example.banking.dao.TransactionDAO;
 import com.example.banking.dao.jdbc.JdbcAccountDAO;
 import com.example.banking.dao.jdbc.JdbcCustomerDAO;
 import com.example.banking.dao.jdbc.JdbcLoginAuditDAO;
+import com.example.banking.dao.jdbc.JdbcTransactionAuditDAO;
+import com.example.banking.dao.jdbc.JdbcTransactionDAO;
 import com.example.banking.security.PasswordHasher;
 import com.example.banking.security.Pbkdf2PasswordHasher;
 import com.example.banking.service.AccountService;
 import com.example.banking.service.AuthService;
+import com.example.banking.service.TransactionService;
 import com.example.banking.util.AppConfig;
 import com.example.banking.util.ConnectionFactory;
+import com.example.banking.util.JdbcTransaction;
 import com.example.banking.util.ReferenceGenerator;
 import com.example.banking.validation.AccountValidator;
 import com.example.banking.validation.CustomerValidator;
+import com.example.banking.validation.TransactionValidator;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -26,6 +33,7 @@ import org.slf4j.LoggerFactory;
 public class BankingApp {
 
     private static final Logger log = LoggerFactory.getLogger(BankingApp.class);
+    private static final int MAX_TX_ATTEMPTS = 3;   // doc section 12: retry deadlocks at most 3 times
 
     public static void main(String[] args) {
         try {
@@ -40,19 +48,26 @@ public class BankingApp {
             CustomerDAO customerDao = new JdbcCustomerDAO(connections, queryTimeout);
             LoginAuditDAO loginAuditDao = new JdbcLoginAuditDAO(connections, queryTimeout);
             AccountDAO accountDao = new JdbcAccountDAO(connections, queryTimeout, config.savingsMinimumBalance());
+            TransactionDAO ledger = new JdbcTransactionDAO(connections, queryTimeout);
+            TransactionAuditDAO txAudit = new JdbcTransactionAuditDAO(connections, queryTimeout);
 
             // ---- helpers ----
             PasswordHasher hasher = new Pbkdf2PasswordHasher(config.passwordHashIterations());
             ReferenceGenerator refs = new ReferenceGenerator(clock);
+            JdbcTransaction tx = new JdbcTransaction(connections, MAX_TX_ATTEMPTS);
 
             // ---- services ----
             AuthService auth = new AuthService(customerDao, loginAuditDao, hasher, new CustomerValidator(),
                     clock, config.authMaxFailedLogins(), Duration.ofMinutes(config.authLockMinutes()));
             AccountService accountService = new AccountService(accountDao, refs,
                     new AccountValidator(config.txMaxAmount()), clock);
+            TransactionService transactionService = new TransactionService(accountDao, ledger, txAudit, tx,
+                    new TransactionValidator(config.txMaxAmount()), refs);
+
+            AppServices services = new AppServices(auth, accountService, transactionService);
 
             log.info("Application started");
-            new MainMenu(new ConsoleInput(System.out), System.out, auth, accountService).run();
+            new MainMenu(new ConsoleInput(System.out), System.out, services).run();
             log.info("Application stopped");
         } catch (IllegalStateException e) {
             System.err.println("Configuration problem: " + e.getMessage());

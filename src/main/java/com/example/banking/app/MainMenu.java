@@ -4,8 +4,6 @@ import com.example.banking.exception.BankingException;
 import com.example.banking.exception.PersistenceException;
 import com.example.banking.model.Customer;
 import com.example.banking.security.SessionContext;
-import com.example.banking.service.AccountService;
-import com.example.banking.service.AuthService;
 import com.example.banking.service.RegisterRequest;
 import java.io.PrintStream;
 import java.util.Arrays;
@@ -19,14 +17,12 @@ public class MainMenu {
 
     private final ConsoleInput in;
     private final PrintStream out;
-    private final AuthService auth;
-    private final AccountService accounts;
+    private final AppServices services;
 
-    public MainMenu(ConsoleInput in, PrintStream out, AuthService auth, AccountService accounts) {
+    public MainMenu(ConsoleInput in, PrintStream out, AppServices services) {
         this.in = in;
         this.out = out;
-        this.auth = auth;
-        this.accounts = accounts;
+        this.services = services;
     }
 
     public void run() {
@@ -68,7 +64,8 @@ public class MainMenu {
             return;
         }
 
-        Customer created = auth.register(new RegisterRequest(fullName, email, phone, username, password));
+        Customer created = services.auth().register(
+                new RegisterRequest(fullName, email, phone, username, password));
         out.println("Registration successful. You can now log in as '" + created.getUsername() + "'.");
     }
 
@@ -77,9 +74,9 @@ public class MainMenu {
         out.println("--- Log in ---");
         String username = in.readLine("Username: ");
         char[] password = in.readPassword("Password: ");
-        SessionContext session = auth.authenticate(username, password);
+        SessionContext session = services.auth().authenticate(username, password);
         out.println("Welcome, " + session.getUsername() + "!");
-        new CustomerMenu(in, out, auth, accounts, session).run();
+        new CustomerMenu(in, out, services, session).run();
     }
 
     private void safely(Runnable action) {
