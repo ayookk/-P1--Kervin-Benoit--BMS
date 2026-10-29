@@ -1,14 +1,19 @@
 package com.example.banking.app;
 
+import com.example.banking.dao.AccountDAO;
 import com.example.banking.dao.CustomerDAO;
 import com.example.banking.dao.LoginAuditDAO;
+import com.example.banking.dao.jdbc.JdbcAccountDAO;
 import com.example.banking.dao.jdbc.JdbcCustomerDAO;
 import com.example.banking.dao.jdbc.JdbcLoginAuditDAO;
 import com.example.banking.security.PasswordHasher;
 import com.example.banking.security.Pbkdf2PasswordHasher;
+import com.example.banking.service.AccountService;
 import com.example.banking.service.AuthService;
 import com.example.banking.util.AppConfig;
 import com.example.banking.util.ConnectionFactory;
+import com.example.banking.util.ReferenceGenerator;
+import com.example.banking.validation.AccountValidator;
 import com.example.banking.validation.CustomerValidator;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -28,17 +33,26 @@ public class BankingApp {
             ConnectionFactory connections = new ConnectionFactory(config);
             checkDatabase(connections);
 
+            Clock clock = Clock.systemDefaultZone();
             int queryTimeout = config.dbQueryTimeoutSeconds();
+
+            // ---- DAOs ----
             CustomerDAO customerDao = new JdbcCustomerDAO(connections, queryTimeout);
             LoginAuditDAO loginAuditDao = new JdbcLoginAuditDAO(connections, queryTimeout);
-            PasswordHasher hasher = new Pbkdf2PasswordHasher(config.passwordHashIterations());
+            AccountDAO accountDao = new JdbcAccountDAO(connections, queryTimeout, config.savingsMinimumBalance());
 
+            // ---- helpers ----
+            PasswordHasher hasher = new Pbkdf2PasswordHasher(config.passwordHashIterations());
+            ReferenceGenerator refs = new ReferenceGenerator(clock);
+
+            // ---- services ----
             AuthService auth = new AuthService(customerDao, loginAuditDao, hasher, new CustomerValidator(),
-                    Clock.systemUTC(), config.authMaxFailedLogins(),
-                    Duration.ofMinutes(config.authLockMinutes()));
+                    clock, config.authMaxFailedLogins(), Duration.ofMinutes(config.authLockMinutes()));
+            AccountService accountService = new AccountService(accountDao, refs,
+                    new AccountValidator(config.txMaxAmount()), clock);
 
             log.info("Application started");
-            new MainMenu(new ConsoleInput(System.out), System.out, auth).run();
+            new MainMenu(new ConsoleInput(System.out), System.out, auth, accountService).run();
             log.info("Application stopped");
         } catch (IllegalStateException e) {
             System.err.println("Configuration problem: " + e.getMessage());

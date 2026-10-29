@@ -29,7 +29,7 @@ public class ConsoleInput {
     public String readLine(String prompt) {
         String line;
         if (console != null) {
-            line = console.readLine(prompt);
+             line = console.readLine("%s", prompt);
         } else {
             out.print(prompt);
             out.flush();
@@ -44,7 +44,7 @@ public class ConsoleInput {
     /** Reads a password. Hidden while typing when a real terminal is available. */
     public char[] readPassword(String prompt) {
         if (console != null) {
-            char[] password = console.readPassword(prompt);
+            char[] password = console.readPassword("%s", prompt);
             if (password == null) {
                 throw new InputClosedException();
             }

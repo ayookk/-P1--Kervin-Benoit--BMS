@@ -4,6 +4,7 @@ import com.example.banking.exception.BankingException;
 import com.example.banking.exception.PersistenceException;
 import com.example.banking.model.Customer;
 import com.example.banking.security.SessionContext;
+import com.example.banking.service.AccountService;
 import com.example.banking.service.AuthService;
 import com.example.banking.service.RegisterRequest;
 import java.io.PrintStream;
@@ -19,11 +20,13 @@ public class MainMenu {
     private final ConsoleInput in;
     private final PrintStream out;
     private final AuthService auth;
+    private final AccountService accounts;
 
-    public MainMenu(ConsoleInput in, PrintStream out, AuthService auth) {
+    public MainMenu(ConsoleInput in, PrintStream out, AuthService auth, AccountService accounts) {
         this.in = in;
         this.out = out;
         this.auth = auth;
+        this.accounts = accounts;
     }
 
     public void run() {
@@ -41,7 +44,7 @@ public class MainMenu {
                     out.println("Goodbye.");
                     return;
                 }
-                default -> { }   // readChoice guarantees 1-3
+                default -> { }
             }
         }
     }
@@ -76,15 +79,14 @@ public class MainMenu {
         char[] password = in.readPassword("Password: ");
         SessionContext session = auth.authenticate(username, password);
         out.println("Welcome, " + session.getUsername() + "!");
-        new CustomerMenu(in, out, auth, session).run();
+        new CustomerMenu(in, out, auth, accounts, session).run();
     }
 
-    /** Runs an action and turns any banking error into a safe message instead of a crash. */
     private void safely(Runnable action) {
         try {
             action.run();
         } catch (PersistenceException e) {
-            log.error("Database error", e);   // full details go to logs/banking-cli.log only
+            log.error("Database error", e);
             out.println("The operation could not be completed. Please try again.");
         } catch (BankingException e) {
             out.println(e.getMessage());
