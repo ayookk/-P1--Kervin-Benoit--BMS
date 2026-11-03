@@ -21,7 +21,8 @@ import com.example.banking.util.JdbcTransaction;
 import com.example.banking.util.ReferenceGenerator;
 import com.example.banking.validation.AccountValidator;
 import com.example.banking.validation.CustomerValidator;
-import com.example.banking.validation.TransactionValidator;
+import com.example.banking.validation.TransactionValidator; 
+import com.example.banking.service.SessionService;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -64,7 +65,10 @@ public class BankingApp {
             TransactionService transactionService = new TransactionService(accountDao, ledger, txAudit, tx,
                                     new TransactionValidator(config.txMaxAmount()), refs, config.historyMaxPageSize());
 
-            AppServices services = new AppServices(auth, accountService, transactionService);
+                        SessionService sessionService = new SessionService(clock,
+                    Duration.ofSeconds(config.sessionIdleTimeoutSeconds()), loginAuditDao);
+
+            AppServices services = new AppServices(auth, accountService, transactionService, sessionService);
 
             log.info("Application started");
             new MainMenu(new ConsoleInput(System.out), System.out, services).run();

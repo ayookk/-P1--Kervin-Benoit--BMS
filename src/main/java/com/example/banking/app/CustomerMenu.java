@@ -1,5 +1,5 @@
 package com.example.banking.app;
-
+import com.example.banking.exception.SessionExpiredException;
 import com.example.banking.exception.BankingException;
 import com.example.banking.exception.PersistenceException;
 import com.example.banking.exception.ValidationException;
@@ -54,7 +54,7 @@ public class CustomerMenu {
             out.println("7. Transaction history");
             out.println("8. Change password");
             out.println("9. Log out");
-            int choice = in.readChoice("Choose an option: ", 1, 9);
+            int choice = askChoice("Choose an option: ", 1, 9);
             switch (choice) {
                 case 1 -> safely(this::showAccounts);
                 case 2 -> safely(this::openAccount);
@@ -101,7 +101,7 @@ public class CustomerMenu {
         out.println("2. Current");
         out.println("3. Loan");
         out.println("4. Back");
-        int choice = in.readChoice("Choose a type: ", 1, 4);
+        int choice = askChoice("Choose a type: ", 1, 4);
         Account opened = switch (choice) {
             case 1 -> services.accounts().openSavings(session);
             case 2 -> services.accounts().openCurrent(session);
@@ -116,9 +116,9 @@ public class CustomerMenu {
 
     private Account openLoan() {
         out.println("Note: this records a loan you owe. No money is paid out (simplified loan).");
-        Money principal = Money.of(in.readLine("Loan amount: $"));
-        BigDecimal rate = parseDecimal(in.readLine("Annual interest rate (%): "), "interest rate");
-        int tenure = parseWholeNumber(in.readLine("Tenure (months): "), "tenure");
+        Money principal = Money.of(ask("Loan amount: $"));
+        BigDecimal rate = parseDecimal(ask("Annual interest rate (%): "), "interest rate");
+        int tenure = parseWholeNumber(ask("Tenure (months): "), "tenure");
         return services.accounts().openLoan(session, principal, rate, tenure);
     }
 
@@ -126,7 +126,7 @@ public class CustomerMenu {
 
     private void deposit() {
         Account account = chooseAccount("Deposit into which account?");
-        Money amount = Money.of(in.readLine("Amount to deposit: $"));
+        Money amount = Money.of(ask("Amount to deposit: $"));
         BankTransaction t = services.transactions().deposit(session, account.getAccountId(), amount);
         out.println("Deposited $" + t.getAmount() + ". New balance: $" + t.getDestinationBalanceAfter() + ".");
         printReceipt(t);
@@ -134,7 +134,7 @@ public class CustomerMenu {
 
     private void withdraw() {
         Account account = chooseAccount("Withdraw from which account?");
-        Money amount = Money.of(in.readLine("Amount to withdraw: $"));
+        Money amount = Money.of(ask("Amount to withdraw: $"));
         BankTransaction t = services.transactions().withdraw(session, account.getAccountId(), amount);
         out.println("Withdrew $" + t.getAmount() + ". New balance: $" + t.getSourceBalanceAfter() + ".");
         printReceipt(t);
@@ -142,8 +142,8 @@ public class CustomerMenu {
 
     private void transfer() {
         Account from = chooseAccount("Transfer from which account?");
-        String to = in.readLine("Destination account number (12 digits): ");
-        Money amount = Money.of(in.readLine("Amount to transfer: $"));
+        String to = ask("Destination account number (12 digits): ");
+        Money amount = Money.of(ask("Amount to transfer: $"));
         BankTransaction t = services.transactions().transfer(session, from.getAccountId(), to, amount);
         String digits = to.replaceAll("\\D", "");
         String masked = "****" + digits.substring(Math.max(0, digits.length() - 4));
@@ -181,7 +181,7 @@ public class CustomerMenu {
             out.println("Page " + (p.page() + 1) + " of " + p.totalPages() + "  (" + p.totalItems() + " transactions)");
 
             String prompt = (p.hasNext() ? "[N]ext  " : "") + (p.hasPrevious() ? "[P]revious  " : "") + "[B]ack: ";
-            String nav = in.readLine(prompt).toUpperCase();
+            String nav = ask(prompt).toUpperCase();
             if (nav.equals("N") && p.hasNext()) {
                 page++;
             } else if (nav.equals("P") && p.hasPrevious()) {
@@ -206,7 +206,7 @@ public class CustomerMenu {
             Account a = mine.get(i);
             out.printf("%d. %-8s %s  $%s%n", i + 1, a.type(), a.getAccountNumber(), a.getBalance());
         }
-        int choice = in.readChoice("Choose account: ", 1, mine.size());
+        int choice = askChoice("Choose account: ", 1, mine.size());
         return mine.get(choice - 1);
     }
 
@@ -217,9 +217,9 @@ public class CustomerMenu {
     // ---------- password ----------
 
     private void changePassword() {
-        char[] current = in.readPassword("Current password: ");
-        char[] next = in.readPassword("New password: ");
-        char[] confirm = in.readPassword("Confirm new password: ");
+        char[] current = askPassword("Current password: ");
+        char[] next = askPassword("New password: ");
+        char[] confirm = askPassword("Confirm new password: ");
 
         boolean match = Arrays.equals(next, confirm);
         Arrays.fill(confirm, '\0');
@@ -232,7 +232,31 @@ public class CustomerMenu {
         services.auth().changePassword(session, current, next);
         out.println("Password changed.");
     }
+ 
+        // ---------- every input goes through these: expiry is checked the moment input returns (doc 20) ----------
 
+    private String ask(String prompt) {
+        String answer = in.readLine(prompt);
+        services.sessions().requireActive(session);
+        return answer;
+    }
+
+    private int askChoice(String prompt, int min, int max) {
+        int choice = in.readChoice(prompt, min, max);
+        services.sessions().requireActive(session);
+        return choice;
+    }
+
+    private char[] askPassword(String prompt) {
+        char[] password = in.readPassword(prompt);
+        try {
+            services.sessions().requireActive(session);
+        } catch (SessionExpiredException e) {
+            java.util.Arrays.fill(password, '\0');   // don't leave a password in memory on the way out
+            throw e;
+        }
+        return password;
+    }
     // ---------- input parsing helpers ----------
 
     private static BigDecimal parseDecimal(String text, String field) {
