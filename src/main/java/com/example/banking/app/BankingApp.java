@@ -62,7 +62,7 @@ public class BankingApp {
             AccountService accountService = new AccountService(accountDao, refs,
                     new AccountValidator(config.txMaxAmount()), clock);
             TransactionService transactionService = new TransactionService(accountDao, ledger, txAudit, tx,
-                    new TransactionValidator(config.txMaxAmount()), refs);
+                                    new TransactionValidator(config.txMaxAmount()), refs, config.historyMaxPageSize());
 
             AppServices services = new AppServices(auth, accountService, transactionService);
 

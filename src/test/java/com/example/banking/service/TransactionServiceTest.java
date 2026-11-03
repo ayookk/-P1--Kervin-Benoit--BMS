@@ -43,7 +43,7 @@ class TransactionServiceTest {
     private final TransactionDAO ledger = new JdbcTransactionDAO(connections, 10);
     private final TransactionService service = new TransactionService(accounts, ledger,
             new JdbcTransactionAuditDAO(connections, 10), new JdbcTransaction(connections, 3),
-            new TransactionValidator(Money.of("1000.00")), new ReferenceGenerator(Clock.systemUTC()));
+            new TransactionValidator(Money.of("1000.00")), new ReferenceGenerator(Clock.systemUTC()), 50);
 
     private SessionContext alice;
     private long aliceSavings;
