@@ -33,5 +33,6 @@ public interface AccountDAO {
     /** Locks several accounts in ASCENDING id order, so two transfers can't deadlock each other. */
     List<Account> lockForUpdate(Connection conn, List<Long> accountIds);
 
-    void updateBalance(Connection conn, long accountId, Money newBalance);
+    void updateBalance(Connection conn, long accountId, Money newBalance); 
+    void updateStatus(Connection conn, long accountId, AccountStatus status);
 }

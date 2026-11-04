@@ -73,7 +73,10 @@ public class InMemoryAccountDAO implements AccountDAO {
     public void updateBalance(Connection conn, long accountId, Money newBalance) {
         balanceUpdates++;   // the Account object itself already holds the new balance
     }
-
+        @Override
+    public void updateStatus(Connection conn, long accountId, AccountStatus status) {
+        statusUpdates++;
+    }
     public int statusUpdates() { return statusUpdates; }
     public int balanceUpdates() { return balanceUpdates; }
 }

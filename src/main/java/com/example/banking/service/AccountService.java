@@ -74,7 +74,7 @@ public class AccountService {
                 .orElseThrow(AuthorizationException::new);
     }
 
-    private String uniqueNumber(AccountType type) {
+    String uniqueNumber(AccountType type) {
         for (int i = 0; i < NUMBER_ATTEMPTS; i++) {
             String candidate = refs.newAccountNumber(type);
             if (accounts.findByNumber(candidate).isEmpty()) {

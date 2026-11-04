@@ -1,5 +1,6 @@
 package com.example.banking.app;
 
+import com.example.banking.service.DepositLoanService;
 import com.example.banking.dao.AccountDAO;
 import com.example.banking.dao.CustomerDAO;
 import com.example.banking.dao.LoginAuditDAO;
@@ -68,7 +69,12 @@ public class BankingApp {
                         SessionService sessionService = new SessionService(clock,
                     Duration.ofSeconds(config.sessionIdleTimeoutSeconds()), loginAuditDao);
 
-            AppServices services = new AppServices(auth, accountService, transactionService, sessionService);
+                        DepositLoanService depositLoanService = new DepositLoanService(accountDao, ledger, txAudit, tx,
+                    new TransactionValidator(config.txMaxAmount()), new AccountValidator(config.txMaxAmount()),
+                    accountService, refs, clock);
+
+            AppServices services = new AppServices(auth, accountService, transactionService,
+                    sessionService, depositLoanService);
 
             log.info("Application started");
             new MainMenu(new ConsoleInput(System.out), System.out, services).run();

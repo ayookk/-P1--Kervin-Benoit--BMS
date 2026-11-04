@@ -1,14 +1,18 @@
 package com.example.banking.app;
-import com.example.banking.exception.SessionExpiredException;
+
 import com.example.banking.exception.BankingException;
 import com.example.banking.exception.PersistenceException;
+import com.example.banking.exception.SessionExpiredException;
 import com.example.banking.exception.ValidationException;
 import com.example.banking.model.Account;
+import com.example.banking.model.AccountStatus;
+import com.example.banking.model.AccountType;
 import com.example.banking.model.BankTransaction;
 import com.example.banking.model.DepositAccount;
 import com.example.banking.model.LoanAccount;
 import com.example.banking.model.Money;
 import com.example.banking.security.SessionContext;
+import com.example.banking.service.DepositLoanService;
 import com.example.banking.service.HistoryPage;
 import java.io.PrintStream;
 import java.math.BigDecimal;
@@ -16,6 +20,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,26 +50,30 @@ public class CustomerMenu {
         while (session.isValid()) {
             out.println();
             out.println("===== Logged in as " + session.getUsername() + " =====");
-            out.println("1. My accounts");
-            out.println("2. Open an account");
-            out.println("3. Deposit");
-            out.println("4. Withdraw");
-            out.println("5. Transfer");
-            out.println("6. Check balance");
-            out.println("7. Transaction history");
-            out.println("8. Change password");
-            out.println("9. Log out");
-            int choice = askChoice("Choose an option: ", 1, 9);
+            out.println(" 1. My accounts");
+            out.println(" 2. Open an account");
+            out.println(" 3. Deposit");
+            out.println(" 4. Withdraw");
+            out.println(" 5. Transfer");
+            out.println(" 6. Repay a loan");
+            out.println(" 7. Settle a matured deposit");
+            out.println(" 8. Check balance");
+            out.println(" 9. Transaction history");
+            out.println("10. Change password");
+            out.println("11. Log out");
+            int choice = askChoice("Choose an option: ", 1, 11);
             switch (choice) {
                 case 1 -> safely(this::showAccounts);
                 case 2 -> safely(this::openAccount);
                 case 3 -> safely(this::deposit);
                 case 4 -> safely(this::withdraw);
                 case 5 -> safely(this::transfer);
-                case 6 -> safely(this::checkBalance);
-                case 7 -> safely(this::history);
-                case 8 -> safely(this::changePassword);
-                case 9 -> {
+                case 6 -> safely(this::repayLoan);
+                case 7 -> safely(this::settleDeposit);
+                case 8 -> safely(this::checkBalance);
+                case 9 -> safely(this::history);
+                case 10 -> safely(this::changePassword);
+                case 11 -> {
                     services.auth().logout(session);
                     out.println("You have been logged out.");
                 }
@@ -100,12 +109,14 @@ public class CustomerMenu {
         out.println("1. Savings");
         out.println("2. Current");
         out.println("3. Loan");
-        out.println("4. Back");
-        int choice = askChoice("Choose a type: ", 1, 4);
+        out.println("4. Fixed-term deposit (funded from Savings/Current)");
+        out.println("5. Back");
+        int choice = askChoice("Choose a type: ", 1, 5);
         Account opened = switch (choice) {
             case 1 -> services.accounts().openSavings(session);
             case 2 -> services.accounts().openCurrent(session);
             case 3 -> openLoan();
+            case 4 -> openDeposit();
             default -> null;
         };
         if (opened != null) {
@@ -120,6 +131,22 @@ public class CustomerMenu {
         BigDecimal rate = parseDecimal(ask("Annual interest rate (%): "), "interest rate");
         int tenure = parseWholeNumber(ask("Tenure (months): "), "tenure");
         return services.accounts().openLoan(session, principal, rate, tenure);
+    }
+
+    private Account openDeposit() {
+        out.println("A fixed-term deposit locks money until its maturity date. Minimum $100.00.");
+        Account from = chooseAccount("Fund it from which account?", CustomerMenu::isActiveCash,
+                "You need an active Savings or Current account to fund a deposit.");
+        Money principal = Money.of(ask("Deposit amount: $"));
+        int term = parseWholeNumber(ask("Term (months): "), "term");
+        BigDecimal rate = parseDecimal(ask("Annual interest rate (%): "), "interest rate");
+
+        DepositLoanService.DepositOpening opened =
+                services.depositsLoans().openDeposit(session, from.getAccountId(), principal, term, rate);
+        out.println("Matures on " + opened.account().getMaturityDate() + ". " + from.type()
+                + " balance is now $" + opened.transaction().getSourceBalanceAfter() + ".");
+        printReceipt(opened.transaction());
+        return opened.account();
     }
 
     // ---------- money ----------
@@ -149,6 +176,34 @@ public class CustomerMenu {
         String masked = "****" + digits.substring(Math.max(0, digits.length() - 4));
         out.println("Transferred $" + t.getAmount() + " to account " + masked
                 + ". Your new balance: $" + t.getSourceBalanceAfter() + ".");
+        printReceipt(t);
+    }
+
+    private void repayLoan() {
+        Account loan = chooseAccount("Repay which loan?",
+                a -> a instanceof LoanAccount && a.isActive(), "You have no active loans.");
+        Account from = chooseAccount("Pay from which account?", CustomerMenu::isActiveCash,
+                "You need an active Savings or Current account to repay a loan.");
+        Money amount = Money.of(ask("Repayment amount (owed: $" + loan.getBalance() + "): $"));
+
+        BankTransaction t = services.depositsLoans().repayLoan(session, from.getAccountId(),
+                loan.getAccountId(), amount);
+        out.println("Paid $" + t.getAmount() + ". Loan balance now $" + t.getDestinationBalanceAfter()
+                + (t.getDestinationBalanceAfter().isZero() ? " - fully repaid, loan closed." : "."));
+        printReceipt(t);
+    }
+
+    private void settleDeposit() {
+        Account deposit = chooseAccount("Settle which deposit?",
+                a -> a instanceof DepositAccount && a.getStatus() != AccountStatus.CLOSED,
+                "You have no open fixed-term deposits.");
+        Account to = chooseAccount("Pay the proceeds into which account?", CustomerMenu::isActiveCash,
+                "You need an active Savings or Current account to receive the proceeds.");
+
+        BankTransaction t = services.depositsLoans().settleDeposit(session, deposit.getAccountId(),
+                to.getAccountId());
+        out.println("Deposit settled: $" + t.getAmount() + " paid out. " + to.type() + " balance is now $"
+                + t.getDestinationBalanceAfter() + ". The deposit is now closed.");
         printReceipt(t);
     }
 
@@ -194,20 +249,30 @@ public class CustomerMenu {
         }
     }
 
-    /** Shows the customer's own accounts as a numbered list; they pick by number, never by typing an id. */
+    // ---------- choosing accounts ----------
+
     private Account chooseAccount(String title) {
-        List<Account> mine = services.accounts().listMyAccounts(session);
-        if (mine.isEmpty()) {
-            throw new ValidationException("You have no accounts yet. Choose 'Open an account' first.");
+        return chooseAccount(title, a -> true, "You have no accounts yet. Choose 'Open an account' first.");
+    }
+
+    /** Numbered list of the customer's OWN accounts that pass the filter; they pick by number, never by id. */
+    private Account chooseAccount(String title, Predicate<Account> filter, String noneMessage) {
+        List<Account> options = services.accounts().listMyAccounts(session).stream().filter(filter).toList();
+        if (options.isEmpty()) {
+            throw new ValidationException(noneMessage);
         }
         out.println();
         out.println(title);
-        for (int i = 0; i < mine.size(); i++) {
-            Account a = mine.get(i);
+        for (int i = 0; i < options.size(); i++) {
+            Account a = options.get(i);
             out.printf("%d. %-8s %s  $%s%n", i + 1, a.type(), a.getAccountNumber(), a.getBalance());
         }
-        int choice = askChoice("Choose account: ", 1, mine.size());
-        return mine.get(choice - 1);
+        int choice = askChoice("Choose account: ", 1, options.size());
+        return options.get(choice - 1);
+    }
+
+    private static boolean isActiveCash(Account a) {
+        return (a.type() == AccountType.SAVINGS || a.type() == AccountType.CURRENT) && a.isActive();
     }
 
     private void printReceipt(BankTransaction t) {
@@ -232,8 +297,8 @@ public class CustomerMenu {
         services.auth().changePassword(session, current, next);
         out.println("Password changed.");
     }
- 
-        // ---------- every input goes through these: expiry is checked the moment input returns (doc 20) ----------
+
+    // ---------- every input goes through these: expiry is checked the moment input returns (doc 20) ----------
 
     private String ask(String prompt) {
         String answer = in.readLine(prompt);
@@ -252,11 +317,12 @@ public class CustomerMenu {
         try {
             services.sessions().requireActive(session);
         } catch (SessionExpiredException e) {
-            java.util.Arrays.fill(password, '\0');   // don't leave a password in memory on the way out
+            Arrays.fill(password, '\0');
             throw e;
         }
         return password;
     }
+
     // ---------- input parsing helpers ----------
 
     private static BigDecimal parseDecimal(String text, String field) {

@@ -237,6 +237,18 @@ public class JdbcAccountDAO implements AccountDAO {
             throw new PersistenceException("Could not update balance", e);
         }
     }
+         @Override
+    public void updateStatus(Connection conn, long accountId, AccountStatus status) {
+        String sql = "UPDATE accounts SET status = ? WHERE account_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setQueryTimeout(queryTimeoutSeconds);
+            ps.setString(1, status.name());
+            ps.setLong(2, accountId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new PersistenceException("Could not update account status", e);
+        }
+    }
     // ---------- mapping ----------
 
     /** Builds the right subclass for the row's account_type (polymorphism starts here). */
