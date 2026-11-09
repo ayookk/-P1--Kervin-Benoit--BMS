@@ -1,6 +1,7 @@
 package com.example.banking.app;
 
-import com.example.banking.service.DepositLoanService;
+import com.example.banking.ai.IntentParser;
+import com.example.banking.ai.OllamaClient;
 import com.example.banking.dao.AccountDAO;
 import com.example.banking.dao.CustomerDAO;
 import com.example.banking.dao.LoginAuditDAO;
@@ -15,6 +16,8 @@ import com.example.banking.security.PasswordHasher;
 import com.example.banking.security.Pbkdf2PasswordHasher;
 import com.example.banking.service.AccountService;
 import com.example.banking.service.AuthService;
+import com.example.banking.service.DepositLoanService;
+import com.example.banking.service.SessionService;
 import com.example.banking.service.TransactionService;
 import com.example.banking.util.AppConfig;
 import com.example.banking.util.ConnectionFactory;
@@ -22,8 +25,7 @@ import com.example.banking.util.JdbcTransaction;
 import com.example.banking.util.ReferenceGenerator;
 import com.example.banking.validation.AccountValidator;
 import com.example.banking.validation.CustomerValidator;
-import com.example.banking.validation.TransactionValidator; 
-import com.example.banking.service.SessionService;
+import com.example.banking.validation.TransactionValidator;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -64,17 +66,16 @@ public class BankingApp {
             AccountService accountService = new AccountService(accountDao, refs,
                     new AccountValidator(config.txMaxAmount()), clock);
             TransactionService transactionService = new TransactionService(accountDao, ledger, txAudit, tx,
-                                    new TransactionValidator(config.txMaxAmount()), refs, config.historyMaxPageSize());
-
-                        SessionService sessionService = new SessionService(clock,
+                    new TransactionValidator(config.txMaxAmount()), refs, config.historyMaxPageSize());
+            SessionService sessionService = new SessionService(clock,
                     Duration.ofSeconds(config.sessionIdleTimeoutSeconds()), loginAuditDao);
-
-                        DepositLoanService depositLoanService = new DepositLoanService(accountDao, ledger, txAudit, tx,
+            DepositLoanService depositLoanService = new DepositLoanService(accountDao, ledger, txAudit, tx,
                     new TransactionValidator(config.txMaxAmount()), new AccountValidator(config.txMaxAmount()),
                     accountService, refs, clock);
+            IntentParser assistant = buildAssistant(config);
 
             AppServices services = new AppServices(auth, accountService, transactionService,
-                    sessionService, depositLoanService);
+                    sessionService, depositLoanService, assistant);
 
             log.info("Application started");
             new MainMenu(new ConsoleInput(System.out), System.out, services).run();
@@ -88,6 +89,28 @@ public class BankingApp {
             System.out.println();
             System.out.println("Input closed. Goodbye.");
         }
+    }
+
+    /** The AI assistant is optional: null when turned off. The bank works the same either way. */
+    private static IntentParser buildAssistant(AppConfig config) {
+        if (!config.assistantEnabled()) {
+            return null;
+        }
+        IntentParser parser = new IntentParser(
+                new OllamaClient(config.ollamaUrl(), config.ollamaModel(), config.ollamaTimeout()));
+
+        // Load the model in the background while the customer logs in, so the first question is fast.
+        Thread warmUp = new Thread(() -> {
+            try {
+                parser.parse("hello");
+                log.info("AI assistant ready (model {})", config.ollamaModel());
+            } catch (RuntimeException e) {
+                log.warn("AI assistant warm-up failed; is Ollama running? {}", e.getMessage());
+            }
+        }, "ollama-warm-up");
+        warmUp.setDaemon(true);   // never keeps the app open on exit
+        warmUp.start();
+        return parser;
     }
 
     private static void checkDatabase(ConnectionFactory connections) throws SQLException {

@@ -1,5 +1,13 @@
 package com.example.banking.app;
 
+import com.example.banking.ai.AssistantIntent;
+import com.example.banking.ai.AssistantIntent.ChangePassword;
+import com.example.banking.ai.AssistantIntent.CheckBalance;
+import com.example.banking.ai.AssistantIntent.Deposit;
+import com.example.banking.ai.AssistantIntent.NotUnderstood;
+import com.example.banking.ai.AssistantIntent.ShowHistory;
+import com.example.banking.ai.AssistantIntent.Transfer;
+import com.example.banking.ai.AssistantIntent.Withdraw;
 import com.example.banking.exception.BankingException;
 import com.example.banking.exception.PersistenceException;
 import com.example.banking.exception.SessionExpiredException;
@@ -20,6 +28,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,36 +59,137 @@ public class CustomerMenu {
         while (session.isValid()) {
             out.println();
             out.println("===== Logged in as " + session.getUsername() + " =====");
-            out.println(" 1. My accounts");
-            out.println(" 2. Open an account");
-            out.println(" 3. Deposit");
-            out.println(" 4. Withdraw");
-            out.println(" 5. Transfer");
-            out.println(" 6. Repay a loan");
-            out.println(" 7. Settle a matured deposit");
-            out.println(" 8. Check balance");
-            out.println(" 9. Transaction history");
-            out.println("10. Change password");
-            out.println("11. Log out");
-            int choice = askChoice("Choose an option: ", 1, 11);
+            out.println(" 1. Ask the AI assistant (type a request in plain English)");
+            out.println(" 2. My accounts");
+            out.println(" 3. Open an account");
+            out.println(" 4. Deposit");
+            out.println(" 5. Withdraw");
+            out.println(" 6. Transfer");
+            out.println(" 7. Repay a loan");
+            out.println(" 8. Settle a matured deposit");
+            out.println(" 9. Check balance");
+            out.println("10. Transaction history");
+            out.println("11. Change password");
+            out.println("12. Log out");
+            int choice = askChoice("Choose an option: ", 1, 12);
             switch (choice) {
-                case 1 -> safely(this::showAccounts);
-                case 2 -> safely(this::openAccount);
-                case 3 -> safely(this::deposit);
-                case 4 -> safely(this::withdraw);
-                case 5 -> safely(this::transfer);
-                case 6 -> safely(this::repayLoan);
-                case 7 -> safely(this::settleDeposit);
-                case 8 -> safely(this::checkBalance);
-                case 9 -> safely(this::history);
-                case 10 -> safely(this::changePassword);
-                case 11 -> {
+                case 1 -> safely(this::askAssistant);
+                case 2 -> safely(this::showAccounts);
+                case 3 -> safely(this::openAccount);
+                case 4 -> safely(this::deposit);
+                case 5 -> safely(this::withdraw);
+                case 6 -> safely(this::transfer);
+                case 7 -> safely(this::repayLoan);
+                case 8 -> safely(this::settleDeposit);
+                case 9 -> safely(this::checkBalance);
+                case 10 -> safely(this::history);
+                case 11 -> safely(this::changePassword);
+                case 12 -> {
                     services.auth().logout(session);
                     out.println("You have been logged out.");
                 }
                 default -> { }
             }
         }
+    }
+
+    // ---------- AI assistant: the model suggests, the customer confirms, the normal services do the work ----------
+
+    private void askAssistant() {
+        if (services.assistant() == null) {
+            out.println("The AI assistant is turned off (assistant.enabled=false in app.properties).");
+            return;
+        }
+        out.println();
+        out.println("--- AI assistant (runs locally with Ollama; nothing leaves this computer) ---");
+        out.println("Examples: \"send 50 from savings to 102202600023\", \"what's my balance?\", "
+                + "\"I forgot my password\"");
+        String request = ask("What would you like to do? ");
+        out.println("Thinking...");
+
+        AssistantIntent intent = services.assistant().parse(request);
+        log.info("Assistant understood {}", intent.getClass().getSimpleName());   // never log the message itself
+
+        // sealed interface: the compiler checks that every possible intent is handled here
+        switch (intent) {
+            case Transfer t -> assistantTransfer(t);
+            case Deposit d -> assistantDeposit(d);
+            case Withdraw w -> assistantWithdraw(w);
+            case CheckBalance b -> showBalance(resolveAccount(b.account(), a -> true,
+                    "Check which account?"));
+            case ShowHistory h -> showHistory(resolveAccount(h.account(), a -> true,
+                    "History for which account?"));
+            case ChangePassword c -> {
+                out.println("For your security, passwords are only changed on the normal screen, "
+                        + "which asks for your current password.");
+                changePassword();
+            }
+            case NotUnderstood n -> out.println(n.reason());
+        }
+    }
+
+    private void assistantTransfer(Transfer t) {
+        Account from = resolveAccount(t.from(), CustomerMenu::isActiveCash, "Transfer from which account?");
+        if (!confirm("Transfer $" + t.amount() + " from " + from.type() + " " + from.getAccountNumber()
+                + " to account " + mask(t.toAccountNumber()) + "?")) {
+            return;
+        }
+        BankTransaction done = services.transactions().transfer(session, from.getAccountId(),
+                t.toAccountNumber(), t.amount());
+        out.println("Transferred $" + done.getAmount() + ". Your new balance: $" + done.getSourceBalanceAfter() + ".");
+        printReceipt(done);
+    }
+
+    private void assistantDeposit(Deposit d) {
+        Account into = resolveAccount(d.into(), CustomerMenu::isActiveCash, "Deposit into which account?");
+        if (!confirm("Deposit $" + d.amount() + " into " + into.type() + " " + into.getAccountNumber() + "?")) {
+            return;
+        }
+        BankTransaction done = services.transactions().deposit(session, into.getAccountId(), d.amount());
+        out.println("Deposited $" + done.getAmount() + ". New balance: $" + done.getDestinationBalanceAfter() + ".");
+        printReceipt(done);
+    }
+
+    private void assistantWithdraw(Withdraw w) {
+        Account from = resolveAccount(w.from(), CustomerMenu::isActiveCash, "Withdraw from which account?");
+        if (!confirm("Withdraw $" + w.amount() + " from " + from.type() + " " + from.getAccountNumber() + "?")) {
+            return;
+        }
+        BankTransaction done = services.transactions().withdraw(session, from.getAccountId(), w.amount());
+        out.println("Withdrew $" + done.getAmount() + ". New balance: $" + done.getSourceBalanceAfter() + ".");
+        printReceipt(done);
+    }
+
+    /**
+     * Finds the account the assistant meant among the customer's OWN accounts.
+     * If the type is missing or more than one account matches, the customer picks from a list.
+     */
+    private Account resolveAccount(AccountType type, Predicate<Account> allowed, String title) {
+        Predicate<Account> filter = allowed.and(a -> type == null || a.type() == type);
+        List<Account> matches = services.accounts().listMyAccounts(session).stream().filter(filter).toList();
+        if (matches.size() == 1) {
+            return matches.get(0);
+        }
+        String none = type == null ? "You don't have a suitable account for that."
+                                   : "You don't have an active " + type + " account.";
+        return chooseAccount(title, filter, none);
+    }
+
+    /** Nothing happens until the customer types y or yes. */
+    private boolean confirm(String summary) {
+        out.println();
+        out.println(summary);
+        String answer = ask("Type y to confirm, anything else to cancel: ").trim().toLowerCase(Locale.ROOT);
+        if (answer.equals("y") || answer.equals("yes")) {
+            return true;
+        }
+        out.println("Cancelled. Nothing was changed.");
+        return false;
+    }
+
+    private static String mask(String accountNumber) {
+        String digits = accountNumber.replaceAll("\\D", "");
+        return "****" + digits.substring(Math.max(0, digits.length() - 4));
     }
 
     // ---------- accounts ----------
@@ -172,9 +282,7 @@ public class CustomerMenu {
         String to = ask("Destination account number (12 digits): ");
         Money amount = Money.of(ask("Amount to transfer: $"));
         BankTransaction t = services.transactions().transfer(session, from.getAccountId(), to, amount);
-        String digits = to.replaceAll("\\D", "");
-        String masked = "****" + digits.substring(Math.max(0, digits.length() - 4));
-        out.println("Transferred $" + t.getAmount() + " to account " + masked
+        out.println("Transferred $" + t.getAmount() + " to account " + mask(to)
                 + ". Your new balance: $" + t.getSourceBalanceAfter() + ".");
         printReceipt(t);
     }
@@ -208,14 +316,20 @@ public class CustomerMenu {
     }
 
     private void checkBalance() {
-        Account chosen = chooseAccount("Check which account?");
+        showBalance(chooseAccount("Check which account?"));
+    }
+
+    private void showBalance(Account chosen) {
         Account fresh = services.accounts().getOwnedAccount(session, chosen.getAccountId());
         out.println(fresh.type() + " " + fresh.getAccountNumber() + ": $" + fresh.getBalance()
                 + " (" + fresh.getStatus() + ")" + (fresh instanceof LoanAccount ? " - amount owed" : ""));
     }
 
     private void history() {
-        Account account = chooseAccount("History for which account?");
+        showHistory(chooseAccount("History for which account?"));
+    }
+
+    private void showHistory(Account account) {
         int page = 0;
         while (true) {
             HistoryPage p = services.transactions().history(session, account.getAccountId(), page, HISTORY_PAGE_SIZE);
@@ -236,7 +350,7 @@ public class CustomerMenu {
             out.println("Page " + (p.page() + 1) + " of " + p.totalPages() + "  (" + p.totalItems() + " transactions)");
 
             String prompt = (p.hasNext() ? "[N]ext  " : "") + (p.hasPrevious() ? "[P]revious  " : "") + "[B]ack: ";
-            String nav = ask(prompt).toUpperCase();
+            String nav = ask(prompt).toUpperCase(Locale.ROOT);
             if (nav.equals("N") && p.hasNext()) {
                 page++;
             } else if (nav.equals("P") && p.hasPrevious()) {
