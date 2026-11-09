@@ -3,6 +3,7 @@ package com.example.banking.util;
 import com.example.banking.model.Money;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.Properties;
 
 /** All configuration in one place: secrets from environment variables, the rest from app.properties. */
@@ -50,6 +51,23 @@ public final class AppConfig {
 
     public Money savingsMinimumBalance() {
         return Money.of(props.getProperty("savings.minimum.balance", "0.00"));
+    }
+
+    // ---------- AI assistant (local Ollama) ----------
+    public boolean assistantEnabled() {
+        return Boolean.parseBoolean(props.getProperty("assistant.enabled", "true").trim());
+    }
+
+    public String ollamaUrl() {
+        return props.getProperty("ollama.url", "http://localhost:11434").trim();
+    }
+
+    public String ollamaModel() {
+        return props.getProperty("ollama.model", "llama3").trim();
+    }
+
+    public Duration ollamaTimeout() {
+        return Duration.ofSeconds(getInt("ollama.timeout.seconds", 60));
     }
 
     // ---------- helpers ----------
