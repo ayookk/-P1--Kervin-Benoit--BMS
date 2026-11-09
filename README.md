@@ -2,7 +2,8 @@
 
 A menu-driven banking application in plain **Core Java 25 + JDBC + MySQL 8**, with no frameworks.
 Customers register, log in, open Savings / Current / Fixed-term Deposit / Loan accounts,
-deposit, withdraw, transfer, repay loans and view paginated transaction history.
+deposit, withdraw, transfer, repay loans and view paginated transaction history —
+or simply type what they want in plain English to a **local AI assistant** (Ollama).
 
 Revature P1 individual project. It is built to the instructor's design document
 *P1 Secure Banking CLI HLD/LLD/DDD v2.0*; section numbers like "§18" below refer to it.
@@ -13,16 +14,17 @@ Revature P1 individual project. It is built to the instructor's design document
 
 ## Contents
 1. [Features](#features)
-2. [Requirements](#requirements)
-3. [Setup](#setup)
-4. [Running the app](#running-the-app)
-5. [Running the tests](#running-the-tests)
-6. [Configuration](#configuration)
-7. [Project structure](#project-structure)
-8. [Design decisions](#design-decisions)
-9. [Session timeout vs. database transaction timeout](#session-timeout-vs-database-transaction-timeout)
-10. [Known limitations](#known-limitations)
-11. [AI usage log](#ai-usage-log)
+2. [AI banking assistant (extra feature)](#ai-banking-assistant-extra-feature)
+3. [Requirements](#requirements)
+4. [Setup](#setup)
+5. [Running the app](#running-the-app)
+6. [Running the tests](#running-the-tests)
+7. [Configuration](#configuration)
+8. [Project structure](#project-structure)
+9. [Design decisions](#design-decisions)
+10. [Session timeout vs. database transaction timeout](#session-timeout-vs-database-transaction-timeout)
+11. [Known limitations](#known-limitations)
+12. [AI usage log](#ai-usage-log)
 
 ---
 
@@ -54,11 +56,51 @@ Revature P1 individual project. It is built to the instructor's design document
 
 ---
 
+## AI banking assistant (extra feature)
+
+Menu option **1. Ask the AI assistant** lets a customer type requests such as
+*"put 20 dollars in my current account"*, *"send 50 from savings to 101202600058"*,
+*"what's my balance?"* or *"I forgot my password"*.
+
+The model runs **locally** in [Ollama](https://ollama.com) (Llama 3.2, 3B), so customer messages never
+leave the computer and no API key is needed. Java talks to it with the built-in `HttpClient`.
+
+**The rule: the AI suggests, the app decides.**
+
+1. The model turns the sentence into a small JSON object (action, account, destination, amount).
+2. `IntentParser` re-checks every field and builds one of 7 `AssistantIntent` records, or "not understood".
+3. Anything that moves money shows a summary and runs **only if the customer types `y`**.
+4. The normal service then applies every rule: ownership, row locks, funds, rollback, audit.
+
+**Defences against AI mistakes** (each covered by `IntentParserTest`):
+
+| Risk | Defence |
+|---|---|
+| Model invents an account number | The number must appear in what the customer typed, and pass the Luhn check |
+| Wrong or odd amounts | Parsed through `Money` (> 0, max 2 decimals); JSON decimals read as `BigDecimal`, never `double` |
+| Prompt injection ("ignore your rules…") | Only 6 known actions are accepted; anything else is refused; money actions still need `y` |
+| Garbage or non-JSON reply | Treated as "not understood" |
+| Password requests | The assistant only opens the normal Change password screen, which asks for the current password |
+| Ollama not running | Friendly "assistant not available" message; the rest of the bank works normally |
+
+**Model choice (measured on the development laptop, CPU only):**
+
+| Model | First request (model loading) | Warm request |
+|---|---|---|
+| llama3 (8B) | 112 s | too slow on CPU |
+| **llama3.2 (3B)** | 41 s | **3 s** |
+
+The model is kept loaded for 30 minutes (`keep_alive`) and warmed up in the background while the customer logs in.
+The assistant is optional: `assistant.enabled=false` in `app.properties` turns it off.
+
+---
+
 ## Requirements
 
 - **JDK 25** (`java -version`)
 - **Maven 3.9+** (`mvn -v`)
 - **MySQL 8.0** running locally on port 3306
+- **Optional:** [Ollama](https://ollama.com) with the `llama3.2` model, for the AI assistant
 - Windows PowerShell commands are shown below; other systems work the same way.
 
 ---
@@ -110,6 +152,18 @@ Then **close and reopen** your terminal/VS Code so it picks up the new variables
 $env:DB_URL
 ```
 
+### 3. Optional: set up the AI assistant
+
+Install Ollama from <https://ollama.com>, then:
+
+```powershell
+ollama pull llama3.2
+curl.exe http://localhost:11434          # should print: Ollama is running
+ollama run llama3.2 "hi"                 # loads the model so the first request is fast
+```
+
+Without Ollama the app works normally; the assistant option just says it is unavailable.
+
 ---
 
 ## Running the app
@@ -127,7 +181,7 @@ mvn -q compile exec:java
 | Username | Password | Has |
 |---|---|---|
 | `alice` | `Demo!Pass2026` | Savings $600, Current $250, a **matured** Fixed-term Deposit $500 (ready to settle), Loan $1,900 owed |
-| `bob` | `Demo!Pass2026` | Savings $400 |
+| `bob` | `Demo!Pass2026` | Savings $400 (account `101202600058`, handy as a transfer destination) |
 
 Or choose **Register** to create your own customer.
 
@@ -141,13 +195,15 @@ Technical logs go to `logs/banking-cli.log`, never to the screen.
 mvn test
 ```
 
-Expected: **83 tests, 0 failures**. Tests need MySQL running, the `banking_test` database, and the
-`DB_USERNAME` / `DB_PASSWORD` environment variables. They never touch the `banking` database.
+Expected: **97 tests, 0 failures, 1 skipped** (the live Ollama test, skipped on purpose).
+Tests need MySQL running, the `banking_test` database, and the `DB_USERNAME` / `DB_PASSWORD`
+environment variables. They never touch the `banking` database, and they do not need Ollama.
 
 | Test class | Kind | Covers (design doc test IDs) |
 |---|---|---|
 | `Pbkdf2PasswordHasherTest` | Unit | Hashing, salt, wrong password, corrupt hash |
 | `ReferenceGeneratorTest` | Unit | Luhn check digit catches every single-digit typo; unique references |
+| `IntentParserTest` | Unit (fake AI model) | AI assistant safety checks: invented account numbers, bad amounts, invented actions, non-JSON replies, model unavailable |
 | `AuthServiceTest` | Service (in-memory fakes) | T01–T05: registration, duplicates, generic login errors, lockout + unlock, password change, logout |
 | `AccountServiceTest` | Service (in-memory fakes) | T06 ownership, loan validation, lazy deposit maturity |
 | `SessionServiceTest` | Service (in-memory fakes) | T12 inactivity timeout, audited once |
@@ -159,6 +215,7 @@ Expected: **83 tests, 0 failures**. Tests need MySQL running, the `banking_test`
 | `TransferAndHistoryTest` | Integration (MySQL) | T09 transfer, **T10 crash mid-transfer rolls back both balances**, T11 invalid destinations, T15 paging |
 | `DepositLoanServiceTest` | Integration (MySQL) | T16 deposit maturity/settle, T17 loan repayment |
 | `ConcurrencyTest` | Integration (MySQL) | **T14 simultaneous withdrawals can't overspend; opposite transfers don't deadlock** |
+| `OllamaLiveTest` | Live (real Ollama) | The real model understands a transfer. Opt-in: `mvn test "-Dtest=OllamaLiveTest" "-Dollama.live=true" "-Dollama.model=llama3.2"` |
 
 ---
 
@@ -176,6 +233,10 @@ Non-secret settings live in `src/main/resources/app.properties` (committed). Sec
 | `password.hash.iterations` | 600000 | PBKDF2 work factor |
 | `history.max.page.size` | 50 | Largest history page a caller may request |
 | `savings.minimum.balance` | 0.00 | Balance a Savings account must keep |
+| `assistant.enabled` | true | Show the AI assistant (false hides it) |
+| `ollama.url` | http://localhost:11434 | Where the local Ollama server listens |
+| `ollama.model` | llama3.2 | Model used by the assistant |
+| `ollama.timeout.seconds` | 60 | Give up on a model reply after this long |
 
 ---
 
@@ -185,6 +246,7 @@ Non-secret settings live in `src/main/resources/app.properties` (committed). Sec
 banking-cli/
 ├── src/main/java/com/example/banking/
 │   ├── app/         BankingApp (wiring), MainMenu, CustomerMenu, ConsoleInput, AppServices
+│   ├── ai/          LlmClient, OllamaClient, IntentParser, AssistantIntent (AI assistant)
 │   ├── model/       Money, Customer, Account (abstract) + Savings/Current/Deposit/LoanAccount,
 │   │                BankTransaction, enums
 │   ├── dao/         DAO interfaces; dao/jdbc/ holds the JDBC implementations (all SQL lives here)
@@ -195,7 +257,7 @@ banking-cli/
 │   ├── exception/   BankingException and its subclasses
 │   └── util/        AppConfig, ConnectionFactory, JdbcTransaction, ReferenceGenerator
 ├── src/main/resources/  app.properties, logback.xml
-├── src/test/java/       unit, service, DAO-integration and concurrency tests; fakes/
+├── src/test/java/       unit, service, DAO-integration, concurrency and AI tests; fakes/
 ├── sql/mysql/schema.sql 7 tables with PK/FK/UNIQUE/CHECK constraints
 ├── sql/sample-data.sql  fake demo data
 └── pom.xml
@@ -203,6 +265,7 @@ banking-cli/
 
 **Layers:** menus → services → DAOs → MySQL. Menus contain no SQL and no business rules.
 Only DAOs contain SQL. Only `JdbcTransaction` calls `commit()` / `rollback()`.
+The AI assistant sits beside the menus: it only produces suggestions that go through the same services.
 
 ---
 
@@ -217,7 +280,8 @@ Only DAOs contain SQL. Only `JdbcTransaction` calls `commit()` / `rollback()`.
 - **Authorization:** the customer id always comes from the session, never from user input. Ownership is part of the SQL (`WHERE account_id = ? AND customer_id = ?`). Someone else's account gives the same "Account not found." as a non-existent one.
 - **Login gives one generic message** for unknown user, wrong password or locked account, and does a dummy hash for unknown users so timing doesn't reveal which usernames exist.
 - **Passwords are handled as `char[]`** and wiped after use.
-- **Dependency injection by hand:** `BankingApp` builds every object once; everything else receives what it needs. That is what lets service tests use in-memory fakes and a controllable `Clock`.
+- **Dependency injection by hand:** `BankingApp` builds every object once; everything else receives what it needs. That is what lets service tests use in-memory fakes, a controllable `Clock`, and a fake AI model.
+- **The AI never acts on its own:** a sealed `AssistantIntent` type means the menu must handle every possible intent (no `default` case, checked by the compiler), and money actions always need the customer's `y`.
 
 ---
 
@@ -245,6 +309,7 @@ moment input returns, before anything executes (§20).
 - **Simplified loans:** no disbursement, no interest accrual or schedule. Deposits record an interest rate but settle the principal only.
 - **Single-user terminal app:** no admin role, no account statements or export.
 - **Maturity is checked lazily** (when accounts are listed or a settle is attempted), not by a scheduler.
+- **AI assistant:** the first request after starting Ollama can take ~40 s on a CPU-only machine while the model loads (the app warms it up in the background); transfers through the assistant need the destination number typed in the message; answers from a language model are not 100% predictable, which is why every money action is confirmed and re-checked.
 - Sample data uses fixed ids; load it only into an empty, freshly created schema.
 
 ---
@@ -273,4 +338,5 @@ ran every change, and verified SQL, security logic and transaction behaviour mys
 | Nov 3 | `SessionService` inactivity timeout + tests | 71 passing; saw the timeout live with a 20-second setting |
 | Nov 4 | `DepositLoanService`, `TransactionAuditor` refactor + tests; fixing a misplaced method | 81 passing; opened a deposit, early settle refused, repaid a loan |
 | Nov 4 | `ConcurrencyTest` (T14), `sample-data.sql` | 83 passing |
-| Nov 5 | This README | Rebuilt from a clean database following only this README |
+| Nov 5 | README | Rebuilt from a clean database following only this README |
+| Nov 9 | AI assistant: Ollama client, intent parser safety checks, menu with confirmation | 97 passing; live test on llama3 (112 s) vs llama3.2 (3 s warm), chose llama3.2; tried it in the app |
