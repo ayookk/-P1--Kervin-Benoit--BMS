@@ -2,7 +2,7 @@
 
 A menu-driven banking application in plain **Core Java 25 + JDBC + MySQL 8**, with no frameworks.
 Customers register, log in, open Savings / Current / Fixed-term Deposit / Loan accounts,
-deposit, withdraw, transfer, repay loans and view paginated transaction history —
+deposit, withdraw, transfer, repay loans and view paginated transaction history
 or simply type what they want in plain English to a **local AI assistant** (Ollama).
 
 Revature P1 individual project. It is built to the instructor's design document
